@@ -39,11 +39,6 @@ namespace bustub {
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Init(page_id_t page_id, page_id_t parent_id, int max_size) {
   // 缺省：page_id_t parent_id = INVALID_PAGE_ID, int max_size = INTERNAL_PAGE_SIZE);
-  SetPageType(IndexPageType::INTERNAL_PAGE);
-  SetPageId(page_id);
-  SetParentPageId(parent_id);
-  SetSize(0);            // 最开始current size为0
-  SetMaxSize(max_size);  // max_size=INTERNAL_PAGE_SIZE-1 这里一定要减1，因为内部页面的第一个key是无效的
 }
 /*
  * Helper method to get/set the key associated with input "index"(a.k.a
@@ -52,11 +47,10 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Init(page_id_t page_id, page_id_t parent_id
 INDEX_TEMPLATE_ARGUMENTS
 KeyType B_PLUS_TREE_INTERNAL_PAGE_TYPE::KeyAt(int index) const {
   // replace with your own code
-  return array[index].first;
 }
 
 INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_INTERNAL_PAGE_TYPE::SetKeyAt(int index, const KeyType &key) { array[index].first = key; }
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::SetKeyAt(int index, const KeyType &key) {}
 
 /*
  * 找到value对应的下标
@@ -66,13 +60,6 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::SetKeyAt(int index, const KeyType &key) { a
 INDEX_TEMPLATE_ARGUMENTS
 int B_PLUS_TREE_INTERNAL_PAGE_TYPE::ValueIndex(const ValueType &value) const {
   // 对于内部页面，key有序可以比较，但value无法比较，只能顺序查找
-  for (int i = 0; i < GetSize(); i++) {  // 疑问：value应该是从0开始查找吧？key从1开始查找
-    if (array[i].second == value) {
-      return i;  // 找到相同value
-    }
-  }
-  // 找不到value，直接返回-1
-  return -1;
 }
 
 /*
@@ -80,7 +67,7 @@ int B_PLUS_TREE_INTERNAL_PAGE_TYPE::ValueIndex(const ValueType &value) const {
  * offset)
  */
 INDEX_TEMPLATE_ARGUMENTS
-ValueType B_PLUS_TREE_INTERNAL_PAGE_TYPE::ValueAt(int index) const { return array[index].second; }
+ValueType B_PLUS_TREE_INTERNAL_PAGE_TYPE::ValueAt(int index) const {}
 
 /*****************************************************************************
  * LOOKUP 查找key应该在哪个value指向的子树中
@@ -100,19 +87,6 @@ ValueType B_PLUS_TREE_INTERNAL_PAGE_TYPE::Lookup(const KeyType &key, const KeyCo
   // array类型为std::pair<KeyType, ValueType>
   // 正常来说下标范围是[0,size-1]，但是0位置设为无效
   // 所以直接从1位置开始，作为下界，下标范围是[1,size-1]
-  int left = 1;
-  int right = GetSize() - 1;
-  while (left <= right) {
-    int mid = left + (right - left) / 2;
-    if (comparator(KeyAt(mid), key) > 0) {  // 下标还需要减小
-      right = mid - 1;
-    } else {  // 下标还需要增大
-      left = mid + 1;
-    }
-  }  // upper_bound
-  int target_index = left;
-  // 注意，返回的value下标要减1，这样才能满足key(i-1) <= subtree(value(i)) < key(i)
-  return ValueAt(target_index - 1);
 }
 
 /*****************************************************************************
@@ -126,12 +100,7 @@ ValueType B_PLUS_TREE_INTERNAL_PAGE_TYPE::Lookup(const KeyType &key, const KeyCo
  */
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_INTERNAL_PAGE_TYPE::PopulateNewRoot(const ValueType &old_value, const KeyType &new_key,
-                                                     const ValueType &new_value) {
-  array[0].second = old_value;
-  array[1].first = new_key;
-  array[1].second = new_value;
-  SetSize(2);
-}
+                                                     const ValueType &new_value) {}
 /*
  * Insert new_key & new_value pair right after the pair with its value ==
  * old_value
@@ -144,16 +113,6 @@ int B_PLUS_TREE_INTERNAL_PAGE_TYPE::InsertNodeAfter(const ValueType &old_value, 
   // if (GetSize() == GetMaxSize()) {  // 边界
   //   throw std::runtime_error("out of memory");
   // }
-  int insert_index = ValueIndex(old_value) + 1;  // 得到 =old_value的下标 的后一个
-  assert(insert_index != -1);
-  // 数组下标>=insert_index的元素整体后移1位
-  // [insert_index, size - 1] --> [insert_index + 1, size]
-  for (int i = GetSize(); i > insert_index; i--) {
-    array[i] = array[i - 1];
-  }
-  array[insert_index] = std::make_pair(new_key, new_value);  // insert pair
-  IncreaseSize(1);
-  return GetSize();
 }
 
 /*****************************************************************************
@@ -168,16 +127,7 @@ int B_PLUS_TREE_INTERNAL_PAGE_TYPE::InsertNodeAfter(const ValueType &old_value, 
  */
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_INTERNAL_PAGE_TYPE::MoveHalfTo(BPlusTreeInternalPage *recipient,
-                                                BufferPoolManager *buffer_pool_manager) {
-  int start_index = GetMinSize();  // (0,1,2) start index is 1; (0,1,2,3) start index is 2;
-  int move_num = GetSize() - start_index;
-  // 将this page的从array+start_index开始的move_num个元素复制到recipient page的array尾部
-  // NOTE：同时，将recipient page的array中每个value指向的孩子结点的父指针更新为recipient page id
-  // this page array [start_index, size) copy to recipient page
-  recipient->CopyNFrom(array + start_index, move_num, buffer_pool_manager);
-  // NOTE: recipient page size has been updated in recipient->CopyNFrom
-  IncreaseSize(-move_num);  // update this page size
-}
+                                                BufferPoolManager *buffer_pool_manager) {}
 
 /*
  * 从items指向的位置开始，复制size个，到当前调用该函数的page的array尾部（本函数由recipient page调用）
@@ -187,22 +137,7 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::MoveHalfTo(BPlusTreeInternalPage *recipient
  * So I need to 'adopt' them by changing their parent page id, which needs to be persisted with BufferPoolManger
  */
 INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_INTERNAL_PAGE_TYPE::CopyNFrom(MappingType *items, int size, BufferPoolManager *buffer_pool_manager) {
-  // [items,items+size)复制到当前page的array最后一个之后的空间
-  std::copy(items, items + size, array + GetSize());
-  // 修改array中的value的parent page id，其中array范围为[GetSize(), GetSize() + size)
-  for (int i = GetSize(); i < GetSize() + size; i++) {
-    // ValueAt(i)得到的是array中的value指向的孩子结点的page id
-    Page *child_page = buffer_pool_manager->FetchPage(ValueAt(i));
-    BPlusTreePage *child_node = reinterpret_cast<BPlusTreePage *>(child_page->GetData());  // 记得加上GetData()
-    // Since it is an internal page, the moved entry(page)'s parent needs to be updated
-    child_node->SetParentPageId(GetPageId());  // 特别注意这里，别写成child_page->GetPageId()
-    // 注意，UnpinPage的dirty参数要为true，因为修改了page->data转为node后的ParentPageId，即修改了page->data
-    buffer_pool_manager->UnpinPage(child_page->GetPageId(), true);
-  }
-  // 复制后空间增大了size
-  IncreaseSize(size);
-}
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::CopyNFrom(MappingType *items, int size, BufferPoolManager *buffer_pool_manager) {}
 
 /*****************************************************************************
  * REMOVE
@@ -220,7 +155,7 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Remove(int index) {}
  * NOTE: only call this method within AdjustRoot()(in b_plus_tree.cpp)
  */
 INDEX_TEMPLATE_ARGUMENTS
-ValueType B_PLUS_TREE_INTERNAL_PAGE_TYPE::RemoveAndReturnOnlyChild() { return INVALID_PAGE_ID; }
+ValueType B_PLUS_TREE_INTERNAL_PAGE_TYPE::RemoveAndReturnOnlyChild() {}
 /*****************************************************************************
  * MERGE
  *****************************************************************************/
