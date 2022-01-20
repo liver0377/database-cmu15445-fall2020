@@ -39,12 +39,12 @@ namespace bustub {
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(page_id_t page_id, page_id_t parent_id, int max_size) {
   // 缺省：page_id_t parent_id = INVALID_PAGE_ID, int max_size = LEAF_PAGE_SIZE;
-  SetPageType(IndexPageType::LEAF_PAGE);
+  SetMaxSize(max_size);
   SetPageId(page_id);
   SetParentPageId(parent_id);
-  SetSize(0);                      // 最开始current size为0
-  SetMaxSize(max_size);            // max_size=LEAF_PAGE_SIZE-1 这里也可以减1，方便后续的拆分(Split)函数
-  SetNextPageId(INVALID_PAGE_ID);  // 最开始next page id不存在
+  SetSize(0);
+  SetPageType(IndexPageType::LEAF_PAGE);
+  SetNextPageId(INVALID_PAGE_ID);
 }
 
 /**
@@ -63,21 +63,13 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::SetNextPageId(page_id_t next_page_id) { next_pa
  */
 INDEX_TEMPLATE_ARGUMENTS
 int B_PLUS_TREE_LEAF_PAGE_TYPE::KeyIndex(const KeyType &key, const KeyComparator &comparator) const {
-  // 这里手写二分查找lower_bound，速度快于for循环的顺序查找
-  // array类型为std::pair<KeyType, ValueType>
   // 叶结点的下标范围是[0,size-1]
-  int left = 0;
-  int right = GetSize() - 1;
-  while (left <= right) {
-    int mid = left + (right - left) / 2;
-    if (comparator(KeyAt(mid), key) >= 0) {  // 下标还需要减小
-      right = mid - 1;
-    } else {  // 下标还需要增大
-      left = mid + 1;
+  for (int i = 0; i < GetSize(); i++) {
+    if (comparator(keyAt(i), key) >= 0) {
+      return i;
     }
-  }  // lower_bound
-  int target_index = right + 1;
-  return target_index;  // 返回array中第一个>=key的下标（如果key大于所有array，则找到下标为size）
+  }
+  return -1;
 }
 
 /*
@@ -87,7 +79,7 @@ int B_PLUS_TREE_LEAF_PAGE_TYPE::KeyIndex(const KeyType &key, const KeyComparator
 INDEX_TEMPLATE_ARGUMENTS
 KeyType B_PLUS_TREE_LEAF_PAGE_TYPE::KeyAt(int index) const {
   // replace with your own code
-  return array[index].first;
+  return array_[index].first;
 }
 
 /*
@@ -97,7 +89,8 @@ KeyType B_PLUS_TREE_LEAF_PAGE_TYPE::KeyAt(int index) const {
 INDEX_TEMPLATE_ARGUMENTS
 const MappingType &B_PLUS_TREE_LEAF_PAGE_TYPE::GetItem(int index) {
   // replace with your own code
-  return array[index];
+  // 返回index处的pair
+  return array_[index];
 }
 
 /*****************************************************************************
@@ -107,20 +100,28 @@ const MappingType &B_PLUS_TREE_LEAF_PAGE_TYPE::GetItem(int index) {
  * Insert key & value pair into leaf page ordered by key
  * @return  page size after insertion
  */
-INDEX_TEMPLATE_ARGUMENTS
-int B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator) {
+INDEX_TEMPLATE_ARGUMENTS int B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &value,
+                                                                const KeyComparator &comparator) {
   // 疑问：此处是否允许 > MaxSize ？？？
   // if (GetSize() == GetMaxSize()) {  // 边界
   //   throw std::runtime_error("out of memory");
   // }
-  int insert_index = KeyIndex(key, comparator);  // 查找第一个>=key的的下标
-  // 数组下标>=insert_index的元素整体后移1位
-  // [insert_index, size - 1] --> [insert_index + 1, size]
-  for (int i = GetSize(); i > insert_index; i--) {
-    array[i] = array[i - 1];
+  // 情景1: 节点当中已经包含相应的key, 插入失败，返回原size
+  // 情景2：节点当中已无剩余空间，插入失败，返回原size
+  // 情景3： 节点当中没有重复key, 还有剩余空间，插入成功，size + 1
+  for (int i = 0; i + 1 < GetSize(); i++) {
+    if (comparator(key, KeyAt(i)) == 0) {
+      break;
+    }
+    if (comparator(key, KeyAt(i) < 0 && comparator(key, KeyAt(i + 1) > 0))) {
+      for (int j = GetSize(); j > i + 1; j--) {
+        array_[j] = array_[j - 1];
+      }
+      array_[i + 1] = {key, value};
+      IncreaseSize(1);
+      break;
+    }
   }
-  array[insert_index] = std::make_pair(key, value);  // insert pair
-  IncreaseSize(1);
   return GetSize();
 }
 
@@ -132,12 +133,10 @@ int B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &valu
  */
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveHalfTo(BPlusTreeLeafPage *recipient) {
-  int start_index = GetMinSize();  // (0,1,2) start index is 1; (0,1,2,3) start index is 2;
-  int move_num = GetSize() - start_index;
-  // 将this page的从array+start_index开始的move_num个元素复制到recipient page的array尾部
-  recipient->CopyNFrom(array + start_index, move_num);  // this page array [start_index, size) copy to recipient page
-  // NOTE: recipient page size has been updated in recipient->CopyNFrom
-  IncreaseSize(-move_num);  // update this page size
+  int start_index = GetSize() / 2;
+  int size = GetSize() - start_index;
+  recipient->CopyNFrom(array_ + start_index, size);
+  size_ -= size;
 }
 
 /*
@@ -145,8 +144,11 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveHalfTo(BPlusTreeLeafPage *recipient) {
  */
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::CopyNFrom(MappingType *items, int size) {
-  std::copy(items, items + size, array + GetSize());  // [items,items+size)复制到该page的array最后一个之后的空间
-  IncreaseSize(size);                                 // 复制后空间增大了size
+  // 复制后空间增大了size
+  for (int i = GetSize(); i < GetSize() + size; i++) {
+    array_[i] = items[i - GetSize()];
+  }
+  IncreaseSize(size);
 }
 
 /*****************************************************************************
@@ -160,12 +162,13 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::CopyNFrom(MappingType *items, int size) {
  */
 INDEX_TEMPLATE_ARGUMENTS
 bool B_PLUS_TREE_LEAF_PAGE_TYPE::Lookup(const KeyType &key, ValueType *value, const KeyComparator &comparator) const {
-  int target_index = KeyIndex(key, comparator);                                  // 查找第一个>=key的的下标
-  if (target_index == GetSize() || comparator(KeyAt(target_index), key) != 0) {  // =key的下标不存在（只有>key的下标）
-    return false;
+  for (int i = 0; i < GetSize(); i++) {
+    if (comparator(key, KeyAt(i)) == 0) {
+      *value = array_[i].second;
+      return true;
+    }
   }
-  *value = array[target_index].second;  // value是传出参数
-  return true;
+  return false;
 }
 
 /*****************************************************************************
@@ -175,10 +178,21 @@ bool B_PLUS_TREE_LEAF_PAGE_TYPE::Lookup(const KeyType &key, ValueType *value, co
  * First look through leaf page to see whether delete key exist or not. If
  * exist, perform deletion, otherwise return immediately.
  * NOTE: store key&value pair continuously after deletion
+ * 删除之后需要将key&pair恢复成连续状态
  * @return   page size after deletion
  */
 INDEX_TEMPLATE_ARGUMENTS
-int B_PLUS_TREE_LEAF_PAGE_TYPE::RemoveAndDeleteRecord(const KeyType &key, const KeyComparator &comparator) { return 0; }
+int B_PLUS_TREE_LEAF_PAGE_TYPE::RemoveAndDeleteRecord(const KeyType &key, const KeyComparator &comparator) {
+  for (int i = 0; i < GetSize(); i++) {
+    if (comparator(key, KeyAt(i)) == 0) {
+      for (int j = i + 1; j < GetSize(); j++) {
+        array_[j - 1] = array_[j];
+      }
+    }
+  }
+  size_--;
+  return GetSize();
+}
 
 /*****************************************************************************
  * MERGE
@@ -188,7 +202,9 @@ int B_PLUS_TREE_LEAF_PAGE_TYPE::RemoveAndDeleteRecord(const KeyType &key, const 
  * to update the next_page id in the sibling page
  */
 INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveAllTo(BPlusTreeLeafPage *recipient) {}
+void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveAllTo(BPlusTreeLeafPage *recipient) {
+  // 暂且没找到接口
+}
 
 /*****************************************************************************
  * REDISTRIBUTE
@@ -196,26 +212,52 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveAllTo(BPlusTreeLeafPage *recipient) {}
 /*
  * Remove the first key & value pair from this page to "recipient" page.
  */
+
+/*
+ * 注意这里copy类函数和move类函数的区别，copy类函数的用途就是作为辅助函数
+ */
 INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveFirstToEndOf(BPlusTreeLeafPage *recipient) {}
+void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveFirstToEndOf(BPlusTreeLeafPage *recipient) {
+  // 将当前page的{key, value}移动到最后一个recipient 的最后一个位置
+  auto first_pair = GetItem(0);
+  for (int i = 1; i < GetSize(); i++) {
+    array_[i - 1] = array_[i];
+  }
+  size_--;
+  recipient->CopyFirstFrom(first_pair);
+}
 
 /*
  * Copy the item into the end of my item list. (Append item to my array)
  */
 INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_LEAF_PAGE_TYPE::CopyLastFrom(const MappingType &item) {}
+void B_PLUS_TREE_LEAF_PAGE_TYPE::CopyLastFrom(const MappingType &item) {
+  // 将item拷贝到当前array_的最后面
+  array_[GetSize()] = item;
+  size_++;
+}
 
 /*
  * Remove the last key & value pair from this page to "recipient" page.
  */
 INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveLastToFrontOf(BPlusTreeLeafPage *recipient) {}
+void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveLastToFrontOf(BPlusTreeLeafPage *recipient) {
+  // 将当前page的最后一个{key, value}移动到recipient的首部
+  auto last_pair = GetItem(GetSize());
+}
 
 /*
  * Insert item at the front of my items. Move items accordingly.
  */
 INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_LEAF_PAGE_TYPE::CopyFirstFrom(const MappingType &item) {}
+void B_PLUS_TREE_LEAF_PAGE_TYPE::CopyFirstFrom(const MappingType &item) {
+  // 将item拷贝到当前array_的首部
+  for (int i = GetSize(); i > 0; i--) {
+    array_[i] = array_[i - 1];
+  }
+  array_[0] = item;
+  size_++;
+}
 
 template class BPlusTreeLeafPage<GenericKey<4>, RID, GenericComparator<4>>;
 template class BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>>;
