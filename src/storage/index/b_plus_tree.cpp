@@ -17,6 +17,7 @@
 #include "storage/page/header_page.h"
 
 namespace bustub {
+
 INDEX_TEMPLATE_ARGUMENTS
 BPLUSTREE_TYPE::BPlusTree(std::string name, BufferPoolManager *buffer_pool_manager, const KeyComparator &comparator,
                           int leaf_max_size, int internal_max_size)
@@ -285,7 +286,29 @@ void BPLUSTREE_TYPE::InsertIntoParent(BPlusTreePage *old_node, const KeyType &ke
  * necessary.
  */
 INDEX_TEMPLATE_ARGUMENTS
-void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {}
+void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
+  // 该函数用于从索引树中删除指定key
+  if (IsEmpty()) {
+    return;
+  }
+  auto [leaf_page, root_is_latched] = FindLeafPageByOperation(key, Operation::DELETE, transaction);
+  LeafPage *leaf_node = reinterpret_cast<LeafPage *>(leaf_page->GetData());
+  int old_size = leaf_node->GetSize();
+  int new_size = leaf_node->RemoveAndDeleteRecord(key, comparator_);
+
+  // 1.删除失败
+  if (new_size == old_size) {
+    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), false);
+    return;
+  }
+  // 2.删除成功
+  bool *pointer_root_is_latched = new bool(root_is_latched);
+  CoalesceOrRedistribute(leaf_node, transaction, pointer_root_is_latched);
+  delete pointer_root_is_latched;
+
+  // leaf page可能是被重新分配也可能是被删除，但总之得确保其被unpin
+  buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+}
 
 /*
  * User needs to first find the sibling of input page. If sibling's size + input
@@ -297,7 +320,38 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {}
 INDEX_TEMPLATE_ARGUMENTS
 template <typename N>
 bool BPLUSTREE_TYPE::CoalesceOrRedistribute(N *node, Transaction *transaction, bool *root_is_latched) {
-  return false;
+  // 该函数用于判断是进行合并还是进行重新分配的操作, 如果node需要被删除那么返回true,否则返回false
+  // 情形1: node是根节点
+  if (node->IsRootPage()) {
+    return AdjustRoot(node);
+  }
+  // 情形2: 删除之后节点中的内容依旧大于等于minsize, 不需要调整，直接返回
+  if (node->GetSize() >= node->GetMinSize()) {
+    return false;
+  }
+  // 情形3: 删除之后节点中的内容小于minsize
+
+  auto parent_page_id = node->GetParentPageId();
+  auto parent = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page_id)->GetData());
+  int index = parent->ValueIndex(node->GetPageId());
+  // 如果一个节点放不下自己和兄弟节点的pair, 尝试从兄弟节点中借, 这里尽量向前面一个兄弟节点借
+  // 如果node在parent page是第一个节点的话就向后面一个节点借
+  int sibling_index = index > 0 ? index - 1 : 1;
+  auto sibling_page_id = parent->ValueAt(sibling_index);
+  auto sibling_node = reinterpret_cast<N *>(buffer_pool_manager_->FetchPage(sibling_page_id));
+
+  if (node->GetSize() + sibling_node->GetSize() >= node->GetMaxSize()) {
+    Redistribute(sibling_node, node, index);
+    buffer_pool_manager_->UnpinPage(parent_page_id, true);
+    buffer_pool_manager_->UnpinPage(sibling_page_id, true);
+    return false;
+  }
+  // 进行node与neighbor_node之间的合并
+  Coalesce(&sibling_node, &node, &parent, index, transaction, root_is_latched);  // 返回值是parent是否需要被删除
+
+  buffer_pool_manager_->UnpinPage(parent->GetPageId(), true);
+  buffer_pool_manager_->UnpinPage(sibling_node->GetPageId(), true);
+  return true;
 }
 
 /*
@@ -317,7 +371,35 @@ template <typename N>
 bool BPLUSTREE_TYPE::Coalesce(N **neighbor_node, N **node,
                               BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> **parent, int index,
                               Transaction *transaction, bool *root_is_latched) {
-  return false;
+  // 该函数用于合并两个节点
+  int key_index = index;
+  if (index == 0) {
+    // 表明neighbor_node是node的后继节点，在该函数中我们统一保持neighbor_node在node的前面，所以这里要
+    // 进行交换
+    std::swap(node, neighbor_node);
+    key_index = 1;
+  }
+  KeyType middle_key = (*parent)->KeyAt(key_index);
+
+  if ((*node)->IsLeafPage()) {
+    // 将node中的值全部移往neighbor_node中
+    LeafPage *leaf_node = reinterpret_cast<LeafPage *>(*node);
+    LeafPage *neighbor_leaf_node = reinterpret_cast<LeafPage *>(*neighbor_node);
+    leaf_node->MoveAllTo(neighbor_leaf_node);
+    // 设置叶子节点链表指针
+    neighbor_leaf_node->SetNextPageId(leaf_node->GetNextPageId());
+  } else {
+    // 将node中的值以及middle key送往neighbor_node
+    // 之所以要送middle key是因为node中key与value的值是不相等的
+    InternalPage *internal_node = reinterpret_cast<InternalPage *>(*node);
+    InternalPage *neighbor_internal_node = reinterpret_cast<InternalPage *>(*neighbor_node);
+    internal_node->MoveAllTo(neighbor_internal_node, middle_key, buffer_pool_manager_);
+  }
+  // 删除node节点
+  // 这里直接将node从父节点中删除即可，在主函数中共对node进行Unpin操作
+  (*parent)->Remove(key_index);
+  // 由于父节点中删除了node, 所以需要进行递归判断
+  return CoalesceOrRedistribute(*parent, transaction, root_is_latched);
 }
 
 /*
@@ -331,7 +413,43 @@ bool BPLUSTREE_TYPE::Coalesce(N **neighbor_node, N **node,
  */
 INDEX_TEMPLATE_ARGUMENTS
 template <typename N>
-void BPLUSTREE_TYPE::Redistribute(N *neighbor_node, N *node, int index) {}
+void BPLUSTREE_TYPE::Redistribute(N *neighbor_node, N *node, int index) {
+  // 该函数用于节点node与兄弟节点neighbor_node之间的重新分配，即节点向兄弟节点"借"项的过程
+  // 通过node在父亲节点中的index来判断兄弟节点是node的前驱结点还是后继节点
+  // 重新分配过程中，需要将兄弟节点中离当前节点最近的pair借给当前pair，并且总是将右边的节点的首个key送往父节点
+  auto parent_page_id = node->GetParentPageId();
+  auto parent_node = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page_id)->GetData());
+
+  if (node->IsLeafPage()) {
+    LeafPage *leaf_node = reinterpret_cast<LeafPage *>(node);
+    LeafPage *neighbor_leaf_node = reinterpret_cast<LeafPage *>(neighbor_node);
+    if (index == 0) {
+      // neighbor_node是后继节点
+      neighbor_leaf_node->MoveFirstToEndOf(leaf_node);
+      parent_node->SetKeyAt(1, neighbor_leaf_node->KeyAt(0));
+    } else {
+      // neighbor_node是前驱节点
+      neighbor_leaf_node->MoveLastToFrontOf(leaf_node);
+      parent_node->SetKeyAt(index, leaf_node->KeyAt(0));
+    }
+  } else {
+    // 非叶子节点，需要将兄弟节点的首/尾value以及node对应父亲节点的key所构成的{key, value}插入node
+    // 需要删除兄弟节点的首/尾pair
+    // 最后将父亲节点中node所对应的key替换成兄弟节点的首/尾pair中的key
+    InternalPage *internal_node = reinterpret_cast<InternalPage *>(node);
+    InternalPage *neighbor_internal_node = reinterpret_cast<InternalPage *>(neighbor_node);
+    if (index == 0) {
+      // neighbor_node是后继节点
+      neighbor_internal_node->MoveFirstToEndOf(internal_node, parent_node->KeyAt(1), buffer_pool_manager_);
+      parent_node->SetKeyAt(1, neighbor_internal_node->KeyAt(0));
+    } else {
+      // neighbor_node是前驱节点
+      neighbor_internal_node->MoveLastToFrontOf(internal_node, parent_node->KeyAt(index), buffer_pool_manager_);
+      parent_node->SetKeyAt(1, internal_node->KeyAt(0));
+    }
+  }
+  buffer_pool_manager_->UnpinPage(parent_page_id, true);
+}
 /*
  * Update root page if necessary
  * NOTE: size of root page can be less than min size and this method is only
@@ -343,7 +461,32 @@ void BPLUSTREE_TYPE::Redistribute(N *neighbor_node, N *node, int index) {}
  * happend
  */
 INDEX_TEMPLATE_ARGUMENTS
-bool BPLUSTREE_TYPE::AdjustRoot(BPlusTreePage *old_root_node) { return false; }
+bool BPLUSTREE_TYPE::AdjustRoot(BPlusTreePage *old_root_node) {
+  // 该函数用于调整root page，当对root进行删除过后，使用该函数来进行root_page_id的调整, 只用于coalesceOrRedistribute()中
+  // 情形1：old_root_node为根节点，并且其size == 1， 即含有一个指针
+  if (!old_root_node->IsLeafPage() && old_root_node->GetSize() == 1) {
+    InternalPage *internal_node = reinterpret_cast<InternalPage *>(old_root_node);
+    auto child_page_id = internal_node->RemoveAndReturnOnlyChild();
+
+    // 更新root_page_id
+    root_page_id_ = child_page_id;
+    UpdateRootPageId(0);
+    // 取出新root page， 更新其父指针
+    auto new_root_page = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(root_page_id_)->GetData());
+    new_root_page->SetParentPageId(INVALID_PAGE_ID);
+    return true;
+  }
+
+  // 情形2：old_root是叶子节点，并且删除之后size为0, 表明整个索引树清空了
+  if (old_root_node->IsLeafPage() && old_root_node->GetSize() == 0) {
+    root_page_id_ = INVALID_PAGE_ID;
+    UpdateRootPageId(0);
+    return true;
+  }
+
+  // 其他情况下不需要调整root page id
+  return false;
+}
 
 /*****************************************************************************
  * INDEX ITERATOR
@@ -522,9 +665,11 @@ void BPLUSTREE_TYPE::UpdateRootPageId(int insert_record) {
   // 这个Header用来记录元数据
   HeaderPage *header_page = static_cast<HeaderPage *>(buffer_pool_manager_->FetchPage(HEADER_PAGE_ID));
   if (insert_record != 0) {
+    // 当insert_record不为0时表示正在建立一个新的索引
     // create a new record<index_name + root_page_id> in header_page
     header_page->InsertRecord(index_name_, root_page_id_);
   } else {
+    //当insert_record为0时表示更新原有索引的root_page_id
     // update root_page_id in header_page
     header_page->UpdateRecord(index_name_, root_page_id_);
   }

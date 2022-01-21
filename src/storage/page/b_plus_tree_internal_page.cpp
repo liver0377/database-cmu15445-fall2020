@@ -263,7 +263,6 @@ ValueType B_PLUS_TREE_INTERNAL_PAGE_TYPE::RemoveAndReturnOnlyChild() {
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_INTERNAL_PAGE_TYPE::MoveAllTo(BPlusTreeInternalPage *recipient, const KeyType &middle_key,
                                                BufferPoolManager *buffer_pool_manager) {
-  //存疑。。
   // 当前node的第一个key(即array[0].first)本是无效值(因为是内部结点)，但由于要移动当前node的整个array到recipient
   // 那么必须在移动前将当前node的第一个key 赋值为 父结点中下标为index的middle_key
   SetKeyAt(0, middle_key);  // 将分隔key设置在0的位置
@@ -290,6 +289,7 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::MoveFirstToEndOf(BPlusTreeInternalPage *rec
   // 那么必须在移动前将当前node的第一个key 赋值为 父结点中下标为1的middle_key
   SetKeyAt(0, middle_key);
   // first item (array[0]) of this page array copied to recipient page last
+  // 此时的array_[0]是{middle_key, array_[0].second}
   recipient->CopyLastFrom(array_[0], buffer_pool_manager);
   // delete array[0]
   Remove(0);  // 函数复用
@@ -336,15 +336,19 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::MoveLastToFrontOf(BPlusTreeInternalPage *re
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_INTERNAL_PAGE_TYPE::CopyFirstFrom(const MappingType &pair, BufferPoolManager *buffer_pool_manager) {
   // 将pair拷贝到array_的首部
-  for (int i = GetSize(); i > 0; i--) {
-    array_[i] = array_[i - 1];
+  // move array after index=0 to back by 1 size
+  for (int i = GetSize(); i >= 0; i--) {
+    array_[i + 1] = array_[i];
   }
+  // insert item to array[0]
   array_[0] = pair;
-  auto child_page =
-      reinterpret_cast<BPlusTreeInternalPage *>(buffer_pool_manager->FetchPage(array_[0].second)->GetData());
-  // 修改子树的parent id
-  child_page->SetParentPageId(GetPageId());
+
+  // update parent page id of child page
+  Page *child_page = buffer_pool_manager->FetchPage(ValueAt(0));
+  BPlusTreePage *child_node = reinterpret_cast<BPlusTreePage *>(child_page->GetData());
+  child_node->SetParentPageId(GetPageId());
   buffer_pool_manager->UnpinPage(child_page->GetPageId(), true);
+
   IncreaseSize(1);
 }
 

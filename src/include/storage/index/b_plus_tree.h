@@ -37,6 +37,7 @@ enum class Operation { FIND = 0, INSERT, DELETE };  // 三种操作：查找、�
  * (3) The structure should shrink and grow dynamically
  * (4) Implement index iterator for range scan
  */
+
 INDEX_TEMPLATE_ARGUMENTS
 class BPlusTree {
   using InternalPage = BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>;
@@ -89,36 +90,6 @@ class BPlusTree {
   std::pair<Page *, bool> FindLeafPageByOperation(const KeyType &key, Operation operation = Operation::FIND,
                                                   Transaction *transaction = nullptr, bool leftMost = false,
                                                   bool rightMost = false);
-
-  // BufferPoolManager *getBPM() { return buffer_pool_manager_; }  // only for DEBUG
-
-  // uint64_t getThreadId() {  // only for DEBUG
-  //   // std::scoped_lock latch{latch_};
-
-  //   std::stringstream ss;
-  //   ss << std::this_thread::get_id();
-  //   // ss << transaction->GetThreadId();
-  //   uint64_t thread_id = std::stoull(ss.str());
-  //   return thread_id % 13;
-  //   // LOG_INFO("Thread=%lu", thread_id % 131);
-  // }
-
-  // int OpToString(Operation op) {  // only for debug
-  //   std::string res;
-  //   int d;
-  //   if (op == Operation::FIND) {
-  //     res = "FIND";
-  //     d = 0;
-  //   } else if (op == Operation::INSERT) {
-  //     res = "INSERT";
-  //     d = 1;
-  //   } else if (op == Operation::DELETE) {
-  //     res = "DELETE";
-  //     d = 2;
-  //   }
-  //   // char *c_res = res.data();
-  //   return d;
-  // }
 
  private:
   void StartNewTree(const KeyType &key, const ValueType &value);
