@@ -12,7 +12,7 @@
 
 namespace bustub {
 
-TEST(BPlusTreeTests, DISABLED_InsertTest1) {
+TEST(BPlusTreeTests, InsertTest1) {
   // create KeyComparator and index schema
   Schema *key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema);
@@ -31,14 +31,17 @@ TEST(BPlusTreeTests, DISABLED_InsertTest1) {
   auto header_page = bpm->NewPage(&page_id);
   (void)header_page;
 
+  int counter = 1;
   std::vector<int64_t> keys = {1, 2, 3, 4, 5};
   for (auto key : keys) {
     int64_t value = key & 0xFFFFFFFF;
     rid.Set(static_cast<int32_t>(key >> 32), value);
     index_key.SetFromInteger(key);
+    LOG_INFO("key, counter = %d, ready to insert", counter);
     tree.Insert(index_key, rid, transaction);
+    counter++;
   }
-
+  LOG_INFO("first loop is over");
   std::vector<RID> rids;
   for (auto key : keys) {
     rids.clear();
@@ -49,17 +52,20 @@ TEST(BPlusTreeTests, DISABLED_InsertTest1) {
     int64_t value = key & 0xFFFFFFFF;
     EXPECT_EQ(rids[0].GetSlotNum(), value);
   }
-
+  LOG_INFO("second loop is over");
   int64_t start_key = 1;
   int64_t current_key = start_key;
   index_key.SetFromInteger(start_key);
+  counter = 1;
   for (auto iterator = tree.Begin(index_key); iterator != tree.end(); ++iterator) {
+    LOG_INFO("counter = %d", counter);
     auto location = (*iterator).second;
     EXPECT_EQ(location.GetPageId(), 0);
     EXPECT_EQ(location.GetSlotNum(), current_key);
     current_key = current_key + 1;
   }
 
+  LOG_INFO("third loop is over");
   EXPECT_EQ(current_key, keys.size() + 1);
 
   bpm->UnpinPage(HEADER_PAGE_ID, true);
@@ -97,7 +103,7 @@ TEST(BPlusTreeTests, DISABLED_InsertTest2) {
     index_key.SetFromInteger(key);
     tree.Insert(index_key, rid, transaction);
   }
-
+  LOG_INFO("first loop is over");
   std::vector<RID> rids;
   for (auto key : keys) {
     rids.clear();
@@ -108,7 +114,7 @@ TEST(BPlusTreeTests, DISABLED_InsertTest2) {
     int64_t value = key & 0xFFFFFFFF;
     EXPECT_EQ(rids[0].GetSlotNum(), value);
   }
-
+  LOG_INFO("second loop is over");
   int64_t start_key = 1;
   int64_t current_key = start_key;
   index_key.SetFromInteger(start_key);
@@ -119,6 +125,7 @@ TEST(BPlusTreeTests, DISABLED_InsertTest2) {
     current_key = current_key + 1;
   }
 
+  LOG_INFO("third loop is over");
   EXPECT_EQ(current_key, keys.size() + 1);
 
   start_key = 3;
@@ -130,7 +137,7 @@ TEST(BPlusTreeTests, DISABLED_InsertTest2) {
     EXPECT_EQ(location.GetSlotNum(), current_key);
     current_key = current_key + 1;
   }
-
+  LOG_INFO("fourth loop is over");
   bpm->UnpinPage(HEADER_PAGE_ID, true);
   delete key_schema;
   delete transaction;

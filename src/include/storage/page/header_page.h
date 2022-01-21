@@ -12,6 +12,7 @@
 
 #include <cstring>
 #include <string>
+#include "common/logger.h"
 #include "storage/page/page.h"
 
 namespace bustub {

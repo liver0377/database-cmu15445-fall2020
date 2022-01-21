@@ -22,7 +22,7 @@ bool BPlusTreePage::IsLeafPage() const { return page_type_ == IndexPageType::LEA
 // 若父节点page id不存在，则为RootPage
 bool BPlusTreePage::IsRootPage() const { return parent_page_id_ == INVALID_PAGE_ID; }
 
-void BPlusTreePage::SetPageType(IndexPageType page_type) { page_type_ == page_type; }
+void BPlusTreePage::SetPageType(IndexPageType page_type) { page_type_ = page_type; }
 
 /*
  * Helper methods to get/set size (number of key/value pairs stored in that
@@ -30,7 +30,10 @@ void BPlusTreePage::SetPageType(IndexPageType page_type) { page_type_ == page_ty
  */
 int BPlusTreePage::GetSize() const { return size_; }
 void BPlusTreePage::SetSize(int size) { size_ = size; }
-void BPlusTreePage::IncreaseSize(int amount) { size_ += amount; }  // size增加amount
+void BPlusTreePage::IncreaseSize(int amount) {
+  size_ += amount;
+  LOG_INFO("size is %d now, page_id: %d", size_, GetPageId());
+}  // size增加amount
 
 /*
  * Helper methods to get/set max size (capacity) of the page
@@ -49,7 +52,10 @@ int BPlusTreePage::GetMinSize() const { return max_size_ / 2; }  // todo 此处�
  */
 page_id_t BPlusTreePage::GetParentPageId() const { return parent_page_id_; }
 
-void BPlusTreePage::SetParentPageId(page_id_t parent_page_id) { parent_page_id_ = parent_page_id; }
+void BPlusTreePage::SetParentPageId(page_id_t parent_page_id) {
+  parent_page_id_ = parent_page_id;
+  LOG_INFO("parent id is set to %d, page_id: %d", parent_page_id, page_id_);
+}
 
 /*
  * Helper methods to get/set self page id

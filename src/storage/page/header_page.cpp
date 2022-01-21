@@ -32,7 +32,7 @@ bool HeaderPage::InsertRecord(const std::string &name, const page_id_t root_id) 
   // copy record content
   memcpy(GetData() + offset, name.c_str(), (name.length() + 1));
   memcpy((GetData() + offset + 32), &root_id, 4);
-
+  LOG_INFO("root %d is inserter", root_id);
   SetRecordCount(record_num + 1);
   return true;
 }
@@ -64,7 +64,7 @@ bool HeaderPage::UpdateRecord(const std::string &name, const page_id_t root_id) 
   int offset = index * 36 + 4;
   // update record content, only root_id
   memcpy((GetData() + offset + 32), &root_id, 4);
-
+  LOG_INFO("root id is updated to %d", root_id);
   return true;
 }
 
